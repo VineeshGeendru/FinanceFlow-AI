@@ -65,13 +65,33 @@ C_GREEN     = "#38A169"
 C_NEUTRAL   = "#718096"
 
 
+# ── File upload helper ────────────────────────────────────────────────────────
+
+def _save_uploaded_file(uploaded_file, dest_dir: str = "output/uploads") -> str:
+    """
+    Save a Streamlit UploadedFile object to disk and return the path.
+
+    WHY WE SAVE TO DISK:
+      Streamlit's file_uploader() returns a file-like object (bytes in memory).
+      Our pipeline expects a file *path* string — it needs to read the file
+      with pandas, which requires a path or a file handle.  Saving to disk is
+      the simplest bridge.  We save to output/uploads/ which is gitignored,
+      so uploaded client files never accidentally get committed.
+    """
+    os.makedirs(dest_dir, exist_ok=True)
+    path = os.path.join(dest_dir, uploaded_file.name)
+    with open(path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return path
+
+
 # ── Cached pipeline runner ────────────────────────────────────────────────────
-# @st.cache_data means: if the arguments haven't changed, return the stored
-# result instead of re-running. This is what makes the trend explorer dropdown
-# feel instant — the 10-second pipeline only runs once per session.
+# The cache key includes a content_hash so that uploading a *different* file
+# with the same filename still triggers a fresh pipeline run.
+# Without the hash, replacing budget.xlsx with a new version wouldn't rerun.
 @st.cache_data(show_spinner=False)
 def _cached_pipeline(budget_path, actuals_path, drivers_path,
-                     mat_dollars, mat_pct):
+                     mat_dollars, mat_pct, _content_hash=None):
     return run_pipeline(
         budget_path  = budget_path,
         actuals_path = actuals_path,
@@ -85,12 +105,63 @@ def _cached_pipeline(budget_path, actuals_path, drivers_path,
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════════════════
 def _build_sidebar() -> dict:
-    """Render sidebar controls. Returns a dict of current settings."""
+    """
+    Render sidebar controls.  Returns a dict of resolved file paths and settings.
+
+    FILE RESOLUTION ORDER:
+      1. If the user uploaded a file → save it and use that path.
+      2. If "Use demo data" is checked → use the default paths from config.
+      3. Otherwise → None (welcome screen is shown instead of the dashboard).
+    """
     with st.sidebar:
-        st.markdown(f"### FinanceFlow-AI")
+        st.markdown("### FinanceFlow-AI")
         st.markdown("FP&A Variance Analysis")
         st.divider()
 
+        # ── File upload widgets ───────────────────────────────────────────────
+        st.markdown("**Upload Your Data Files**")
+        st.caption("Excel (.xlsx) or CSV. Required columns: "
+                   "Month, Department, Line Item, Category, Amount")
+
+        budget_file  = st.file_uploader(
+            "Budget file",
+            type=["xlsx", "xls", "csv"],
+            help="Full-year budget. One row per month per line item.",
+        )
+        actuals_file = st.file_uploader(
+            "Actuals file",
+            type=["xlsx", "xls", "csv"],
+            help="Closed months only. Same column format as budget.",
+        )
+        drivers_file = st.file_uploader(
+            "Drivers file (optional)",
+            type=["csv"],
+            help="Budget owner explanations. Columns: Month, Department, "
+                 "Line Item, Driver Note.",
+        )
+
+        # ── Upload status indicators ──────────────────────────────────────────
+        all_required = budget_file and actuals_file
+        if budget_file:
+            st.success(f"Budget: {budget_file.name}")
+        if actuals_file:
+            st.success(f"Actuals: {actuals_file.name}")
+        if drivers_file:
+            st.success(f"Drivers: {drivers_file.name}")
+
+        st.divider()
+
+        # ── Demo data toggle ──────────────────────────────────────────────────
+        use_demo = st.checkbox(
+            "Use demo data instead",
+            value=not all_required,
+            help="Run the analysis on the sample files in data/ — "
+                 "useful for exploring the dashboard before you have your own files.",
+        )
+
+        st.divider()
+
+        # ── Materiality settings ──────────────────────────────────────────────
         st.markdown("**Materiality Thresholds**")
         mat_dollars = st.number_input(
             "Absolute dollar threshold ($)",
@@ -104,27 +175,42 @@ def _build_sidebar() -> dict:
             min_value=0.0, max_value=100.0,
             value=float(config.MATERIALITY_THRESHOLD_PERCENT),
             step=0.5,
-            help="5.0 means 5% of the budget amount.",
         )
-
-        st.divider()
-
-        # ── FILE PATHS (Phase 8 will replace these with upload widgets) ───────
-        st.markdown("**Data Files**")
-        budget_path  = st.text_input("Budget file",  config.BUDGET_PATH)
-        actuals_path = st.text_input("Actuals file", config.ACTUALS_PATH)
-        drivers_path = st.text_input("Drivers file", config.DRIVERS_PATH)
 
         st.divider()
         run_btn = st.button("Run Analysis", type="primary", use_container_width=True)
 
+    # ── Resolve file paths ────────────────────────────────────────────────────
+    if all_required and not use_demo:
+        # Save uploaded files to disk so the pipeline can read them
+        budget_path  = _save_uploaded_file(budget_file)
+        actuals_path = _save_uploaded_file(actuals_file)
+        drivers_path = _save_uploaded_file(drivers_file) if drivers_file else None
+        # Content hash: ensures cache invalidates when a new file is uploaded
+        # even if the filename is the same (e.g., replacing last month's actuals)
+        content_hash = hash(budget_file.getvalue() + actuals_file.getvalue())
+        files_ready  = True
+    elif use_demo:
+        budget_path  = config.BUDGET_PATH
+        actuals_path = config.ACTUALS_PATH
+        drivers_path = config.DRIVERS_PATH
+        content_hash = "demo"
+        files_ready  = True
+    else:
+        budget_path = actuals_path = drivers_path = None
+        content_hash = None
+        files_ready  = False
+
     return {
-        "budget_path":   budget_path,
-        "actuals_path":  actuals_path,
-        "drivers_path":  drivers_path,
-        "mat_dollars":   mat_dollars,
-        "mat_pct":       mat_pct,
-        "run_clicked":   run_btn,
+        "budget_path":    budget_path,
+        "actuals_path":   actuals_path,
+        "drivers_path":   drivers_path,
+        "mat_dollars":    mat_dollars,
+        "mat_pct":        mat_pct,
+        "run_clicked":    run_btn,
+        "files_ready":    files_ready,
+        "content_hash":   content_hash,
+        "using_demo":     use_demo,
     }
 
 
@@ -521,6 +607,48 @@ def _show_ytd_table(results: dict):
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
+def _show_welcome():
+    """Shown when no files have been uploaded and demo data is off."""
+    st.markdown("## Get Started")
+    st.markdown(
+        "Upload your budget and actuals files in the sidebar to run the analysis, "
+        "or check **Use demo data** to explore the dashboard with sample data."
+    )
+    st.divider()
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("**1. Budget file**")
+        st.markdown(
+            "Full-year plan.  \n"
+            "Required columns:  \n"
+            "`Month` `Department` `Line Item` `Category` `Amount`"
+        )
+        st.caption("Accepts .xlsx or .csv")
+    with c2:
+        st.markdown("**2. Actuals file**")
+        st.markdown(
+            "Closed months only — same column format as budget.  \n"
+            "The tool auto-detects which months are closed and aligns "
+            "the budget to match."
+        )
+        st.caption("Accepts .xlsx or .csv")
+    with c3:
+        st.markdown("**3. Drivers file** *(optional)*")
+        st.markdown(
+            "Budget owner explanations for variances.  \n"
+            "Columns: `Month` `Department` `Line Item` `Driver Note`  \n"
+            "Without it, commentary says *'Driver pending budget owner input.'*"
+        )
+        st.caption("Accepts .csv")
+
+    st.divider()
+    st.info(
+        "The tool validates your files before running. If a column is missing "
+        "or mis-named, you'll see a clear error message telling you exactly what to fix."
+    )
+
+
 def main():
     st.title("FinanceFlow-AI")
     st.markdown("FP&A variance analysis — budget vs. actual with AI commentary")
@@ -528,24 +656,31 @@ def main():
 
     settings = _build_sidebar()
 
+    # ── Welcome screen shown when no files are ready ──────────────────────────
+    if not settings["files_ready"]:
+        _show_welcome()
+        return
+
     # Clear cache and rerun if user clicked "Run Analysis"
     if settings["run_clicked"]:
         st.cache_data.clear()
         st.rerun()
 
-    # ── Run pipeline (cached) ─────────────────────────────────────────────────
-    with st.spinner("Running variance analysis..."):
+    # ── Run pipeline (cached by file content + thresholds) ───────────────────
+    label = "demo data" if settings["using_demo"] else "your uploaded files"
+    with st.spinner(f"Running variance analysis on {label}..."):
         try:
             output = _cached_pipeline(
-                budget_path  = settings["budget_path"],
-                actuals_path = settings["actuals_path"],
-                drivers_path = settings["drivers_path"],
-                mat_dollars  = settings["mat_dollars"],
-                mat_pct      = settings["mat_pct"],
+                budget_path   = settings["budget_path"],
+                actuals_path  = settings["actuals_path"],
+                drivers_path  = settings["drivers_path"],
+                mat_dollars   = settings["mat_dollars"],
+                mat_pct       = settings["mat_pct"],
+                _content_hash = settings["content_hash"],
             )
         except (FileNotFoundError, ValueError) as e:
-            st.error(f"Pipeline error: {e}")
-            st.info("Check that your file paths in the sidebar are correct.")
+            st.error(f"**File error:** {e}")
+            st.info("Fix the issue above and click **Run Analysis** to retry.")
             return
 
     # ── Sidebar: download button (needs pipeline to have run first) ───────────
@@ -553,10 +688,10 @@ def main():
         if os.path.exists(output["report_path"]):
             with open(output["report_path"], "rb") as f:
                 st.download_button(
-                    label             = "Download Excel Report",
-                    data              = f,
-                    file_name         = "FinanceFlow_Variance_Report.xlsx",
-                    mime              = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    label               = "Download Excel Report",
+                    data                = f,
+                    file_name           = "FinanceFlow_Variance_Report.xlsx",
+                    mime                = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width = True,
                 )
         ai_mode = output["commentary"]["ai_used"]
