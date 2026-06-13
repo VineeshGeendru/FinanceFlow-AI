@@ -7,7 +7,7 @@ __pycache__/
 *.pyo
 .Python
 
-# Output files (generated, not source)
+# Output files (generated, not source) and uploaded client files
 output/
 
 # OS
