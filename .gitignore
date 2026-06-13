@@ -1,0 +1,15 @@
+# Environment — never commit your API key
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# Output files (generated, not source)
+output/
+
+# OS
+.DS_Store
+Thumbs.db
