@@ -16,9 +16,20 @@ FinanceFlow-AI automates every step — load your files, get back a dashboard an
 
 **Upload two files. Get back:**
 
-- An interactive web dashboard — KPI cards, waterfall chart, variance heatmap, anomaly alerts, and a trend explorer
-- A three-tab Excel workbook — Executive Summary, YTD Variance Analysis, and Monthly Detail — with live formulas and conditional formatting
-- A chase list of material variances that are missing budget owner explanations, so you know exactly whose inbox to hit before the report goes out
+- An interactive web dashboard with a fixed navigation bar, KPI cards, and six analysis sections
+- A **three-tab Excel workbook** — Executive Summary, YTD Variance Analysis, and Monthly Detail — with live formulas and conditional formatting
+- A **chase list** of material variances missing budget owner explanations, so you know exactly whose inbox to hit before the report goes out
+
+**Dashboard sections:**
+
+| Section | What it shows |
+|---|---|
+| Operating Income Bridge | Waterfall chart — how Revenue, COGS, and Opex variances combine into the OI miss or beat |
+| Anomaly Detection | Spikes, consecutive deterioration trends, and material variances with no driver note on file |
+| Year-End Forecast Projection | Full-year P&L forecast: YTD actuals + remaining months at budget, with KPI cards and a grouped bar chart |
+| Variance Heatmap | Line item × month grid colored by net impact on Operating Income |
+| Budget vs Actual — Trend Explorer | Month-by-month line chart for any line item, with material-month markers |
+| YTD Variance Detail | Filterable table of every line item with AI-generated commentary |
 
 ---
 
@@ -39,29 +50,13 @@ cp .env.example .env
 
 Without a key, the tool falls back to deterministic template commentary. The pipeline always completes.
 
-### 3a. Web dashboard (no terminal needed after this)
+### 3. Run the dashboard
 
 ```bash
 streamlit run app.py
 ```
 
-Open `http://localhost:8501`, drag and drop your files in the sidebar, and click **Run Analysis**.
-
-### 3b. Command line
-
-```bash
-py src/main.py
-```
-
-With custom files and thresholds:
-
-```bash
-py src/main.py --budget data/q3_budget.xlsx --actuals data/q3_actuals.xlsx --materiality-dollars 50000
-```
-
-### Demo data
-
-The `data/` folder contains sample files for a fictional SaaS company (FY2026). Check **Use demo data** in the sidebar to explore the full output before uploading your own files.
+Open `http://localhost:8501`. Upload your Budget and Actuals files on the landing page and click **Run Analysis**. Or check **Use demo data** to explore a sample SaaS company dataset immediately.
 
 ---
 
@@ -86,7 +81,7 @@ The drivers file (`.csv`, optional) collects budget owner explanations:
 | `Line Item` | `Salaries & Benefits` |
 | `Driver Note` | `Hired 3 senior engineers ahead of H2 roadmap; approved by CTO outside original budget cycle.` |
 
-The tool validates all files before running and raises clear, actionable errors if anything is wrong.
+The tool validates all files before running and returns clear, actionable error messages if anything is wrong — wrong format, missing columns, non-numeric amounts, month format mismatches, or corrupt files.
 
 ---
 
@@ -107,7 +102,7 @@ src/
   report_builder.py     ← three-tab Excel report with live formulas
   main.py               ← shared pipeline function + CLI entry point
 
-app.py                  ← Streamlit dashboard (calls run_pipeline from main.py)
+app.py                  ← Streamlit dashboard
 output/                 ← generated reports (gitignored)
 ```
 
@@ -144,6 +139,10 @@ The Claude API receives only the variance amounts the engine already calculated,
 
 Variance columns in the Excel report use formulas (`=F2-E2`) instead of the computed numbers. If a finance team member corrects an Actual value after delivery, the variance recalculates automatically. Hardcoded values would break the moment anyone edits a cell.
 
+### Validation at the front door
+
+Every file is validated before any computation runs. The tool checks for required columns, numeric Amount values, YYYY-MM month format, non-empty data, and budget/actuals month overlap. If anything is wrong, a clear error message names the exact problem and how to fix it — the user never sees a Python traceback. Individual dashboard sections also fail gracefully: if one chart errors, the rest of the dashboard still renders.
+
 ---
 
 ## Tech Stack
@@ -170,8 +169,9 @@ Variance columns in the Excel report use formulas (`=F2-E2`) instead of the comp
 | 4 | `src/commentary.py` — Claude API prompts with hallucination controls |
 | 5 | `src/report_builder.py` — three-tab Excel report |
 | 6 | `src/main.py` — CLI orchestrator and shared pipeline function |
-| 7 | `app.py` — Streamlit dashboard (Phase 7: charts and tables) |
-| 8 | `app.py` — file upload: drag and drop in browser, no terminal needed |
+| 7 | `app.py` — Streamlit dashboard: charts, tables, KPI cards, waterfall, heatmap, trend explorer, forecast projection |
+| 8 | `app.py` — browser file upload, fixed two-tier navbar with section scroll, Three.js loading overlay |
+| 9 | `app.py`, `src/data_loader.py` — bulletproof error handling: corrupt files, missing columns, wrong formats, section-level fault isolation |
 
 ---
 
