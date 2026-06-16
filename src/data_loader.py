@@ -85,9 +85,23 @@ def _load_file(path: str, label: str) -> pd.DataFrame:
     ext = os.path.splitext(path)[1].lower()
 
     if ext in (".xlsx", ".xls"):
-        df = pd.read_excel(path)
+        try:
+            df = pd.read_excel(path)
+        except Exception as e:
+            raise ValueError(
+                f"{label} file could not be read as Excel.\n"
+                f"The file may be corrupt, password-protected, or not a valid Excel file.\n"
+                f"Details: {e}"
+            )
     elif ext == ".csv":
-        df = pd.read_csv(path)
+        try:
+            df = pd.read_csv(path)
+        except Exception as e:
+            raise ValueError(
+                f"{label} file could not be read as CSV.\n"
+                f"Check that the file is a valid, plain-text CSV.\n"
+                f"Details: {e}"
+            )
     else:
         raise ValueError(
             f"{label} file must be .xlsx, .xls, or .csv — got '{ext}'\n"
@@ -118,7 +132,11 @@ def _load_drivers(path: str | None) -> pd.DataFrame:
     if path is None or not os.path.exists(path):
         return pd.DataFrame(columns=["Month", "Department", "Line Item", "Driver Note"])
 
-    df = pd.read_csv(path)
+    try:
+        df = pd.read_csv(path)
+    except Exception as e:
+        print(f"[DATA LOADER WARNING] Could not read drivers file '{path}': {e}. Skipping drivers.")
+        return pd.DataFrame(columns=["Month", "Department", "Line Item", "Driver Note"])
     df.columns = df.columns.str.strip()
     for col in df.select_dtypes(include="object").columns:
         df[col] = df[col].str.strip()
@@ -179,7 +197,13 @@ def _validate_months(df: pd.DataFrame, label: str):
     format ("Jan-26"), the merge keys won't match and you'll get zero rows —
     the tool would silently say everything is fine with no variances.
     """
-    sample_month = str(df["Month"].iloc[0])
+    non_null = df["Month"].dropna()
+    if non_null.empty:
+        raise ValueError(
+            f"{label} 'Month' column contains no valid values (all blank).\n"
+            f"Fill the Month column with YYYY-MM values (e.g. '2026-01') before uploading."
+        )
+    sample_month = str(non_null.iloc[0])
     if len(sample_month) != 7 or sample_month[4] != "-":
         raise ValueError(
             f"{label} 'Month' column must use YYYY-MM format (e.g. '2026-01').\n"

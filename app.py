@@ -480,11 +480,14 @@ hr {{ border-color:{BORDER}; opacity:.6; }}
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _save_uploaded_file(uf, dest="output/uploads"):
-    os.makedirs(dest, exist_ok=True)
-    path = os.path.join(dest, uf.name)
-    with open(path, "wb") as f:
-        f.write(uf.getbuffer())
-    return path
+    try:
+        os.makedirs(dest, exist_ok=True)
+        path = os.path.join(dest, uf.name)
+        with open(path, "wb") as f:
+            f.write(uf.getbuffer())
+        return path
+    except Exception as e:
+        raise ValueError(f"Could not save uploaded file '{uf.name}': {e}")
 
 
 def _plotly_dark(fig, height=400, margin=None, extra=None):
@@ -778,7 +781,16 @@ def _run_analysis(settings: dict):
         report_path = build_report(results, commentary)
 
     except (FileNotFoundError, ValueError) as e:
-        st.error(f"**Error:** {e}")
+        st.error(f"**Data error:** {e}")
+        if st.button("Go back"):
+            del st.session_state["settings"]
+            st.rerun()
+        return
+    except Exception as e:
+        st.error(
+            f"**Unexpected error — {type(e).__name__}:** {e}\n\n"
+            f"Check that your files are valid Excel/CSV files with the correct columns, then try again."
+        )
         if st.button("Go back"):
             del st.session_state["settings"]
             st.rerun()
@@ -809,8 +821,13 @@ def _kpi_cards(output):
     mat  = int(mon["Material"].sum())
     anom = len(output["results"]["anomalies"])
 
-    months = sorted(output["data"]["closed_months"])
-    period = f"{months[0]} → {months[-1]}"
+    months = sorted(output["data"].get("closed_months", []))
+    if len(months) >= 2:
+        period = f"{months[0]} → {months[-1]}"
+    elif months:
+        period = months[0]
+    else:
+        period = "N/A"
     st.markdown(f'<div class="kpi-period">YTD Period: {period}</div>',
                 unsafe_allow_html=True)
 
@@ -1212,8 +1229,13 @@ def _build_context(output: dict) -> str:
     """Summarise all analysis results into a text block for the system prompt."""
     results = output["results"]
     data    = output["data"]
-    months  = data["closed_months"]
-    period  = f"{months[0]} to {months[-1]}"
+    months  = data.get("closed_months", [])
+    if len(months) >= 2:
+        period = f"{months[0]} to {months[-1]}"
+    elif months:
+        period = months[0]
+    else:
+        period = "N/A"
 
     # P&L summary
     pl_text = "\n".join(
@@ -1462,7 +1484,10 @@ def _dashboard(output):
     st.markdown('<div id="ff-spacer" style="height:148px"></div>', unsafe_allow_html=True)
 
     # ── KPI cards ─────────────────────────────────────────────────────────────
-    _kpi_cards(output)
+    try:
+        _kpi_cards(output)
+    except Exception as _kpi_err:
+        st.error(f"Could not render KPI summary: {_kpi_err}")
     st.markdown("<br>", unsafe_allow_html=True)
 
     first = not st.session_state.get("dashboard_animated", False)
@@ -1483,7 +1508,10 @@ def _dashboard(output):
             ph.empty()
             with ph.container():
                 with st.expander(title, expanded=True):
-                    fn(output)
+                    try:
+                        fn(output)
+                    except Exception as _sec_err:
+                        st.error(f"Could not render this section: {_sec_err}")
             components.html(
                 "<script>var el=window.parent.document.querySelector('section[data-testid=\"stMain\"]')"
                 "||window.parent.document.querySelector('.main')||window.parent.document.body;"
@@ -1496,7 +1524,10 @@ def _dashboard(output):
         for title, fn in active_sections:
             st.markdown(f'<div id="{_anchor_id(title)}" style="scroll-margin-top:130px"></div>', unsafe_allow_html=True)
             with st.expander(title, expanded=True):
-                fn(output)
+                try:
+                    fn(output)
+                except Exception as _sec_err:
+                    st.error(f"Could not render this section: {_sec_err}")
 
     # ── Download Excel button ─────────────────────────────────────────────────
     st.markdown("<br><br>", unsafe_allow_html=True)
@@ -1513,7 +1544,7 @@ def _dashboard(output):
                     mime      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
                 )
-        ai = output["commentary"]["ai_used"]
+        ai = output.get("commentary", {}).get("ai_used", False)
         st.markdown(
             f'<div style="text-align:center;margin-top:10px;" class="stCaption">'
             f'Commentary: {"Claude AI" if ai else "template fallback"} &nbsp;·&nbsp; '
